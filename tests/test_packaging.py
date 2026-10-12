@@ -23,17 +23,17 @@ def test_platform_manifests_declare_server_and_plugin_consistently():
     codex_mcp = read_json(".mcp.json")
 
     assert portable["name"] == codex["name"] == claude["name"] == "google-chat"
-    assert portable["version"] == codex["version"] == claude["version"] == "0.2.0"
+    assert portable["version"] == codex["version"] == claude["version"] == "0.2.1"
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
     npm = read_json("package.json")
     npm_lock = read_json("package-lock.json")
-    assert project["project"]["version"] == "0.2.0"
+    assert project["project"]["version"] == "0.2.1"
     local_package = next(
         package for package in lock["package"] if package["name"] == "antstudio-google-chat-plugin"
     )
-    assert local_package["version"] == "0.2.0"
-    assert npm["version"] == npm_lock["version"] == "0.2.0"
+    assert local_package["version"] == "0.2.1"
+    assert npm["version"] == npm_lock["version"] == "0.2.1"
     claude_marketplace = read_json(".claude-plugin/marketplace.json")
     codex_marketplace = read_json(".agents/plugins/marketplace.json")
     assert claude_marketplace["name"] == codex_marketplace["name"] == "ant-google-chat"
@@ -58,7 +58,7 @@ def test_mcpb_uses_uv_runtime_and_pinned_project_lock():
     manifest = read_json("manifest.json")
     assert manifest["manifest_version"] == "0.4"
     assert manifest["name"] == "google-chat"
-    assert manifest["version"] == "0.2.0"
+    assert manifest["version"] == "0.2.1"
     assert manifest["server"]["type"] == "uv"
     assert (ROOT / "uv.lock").is_file()
 

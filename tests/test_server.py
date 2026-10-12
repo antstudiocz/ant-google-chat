@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -334,6 +335,41 @@ def test_login_requests_exact_scope_set_and_persists_only_a_complete_grant(
     }
     assert json.loads(requested["token"])["refresh_token"] == "synthetic-refresh"
     assert json.loads(requested["token"])["scopes"] == list(expected)
+
+
+@pytest.mark.parametrize("fail_after_callback", [False, True])
+def test_oauth_callback_url_is_not_logged_and_sdk_logger_level_is_restored(
+    monkeypatch, caplog, fail_after_callback
+):
+    callback_url = "http://127.0.0.1:49152/?code=synthetic-one-time-code&state=synthetic-state"
+    callback_logger = logging.getLogger("google_auth_oauthlib.flow")
+    monkeypatch.setattr(callback_logger, "level", logging.INFO)
+    prior_level = callback_logger.level
+    caplog.set_level(logging.INFO, logger="google_auth_oauthlib.flow")
+
+    class FakeFlow:
+        @classmethod
+        def from_client_config(cls, _config, _scopes, **_kwargs):
+            return cls()
+
+        def run_local_server(self, **_kwargs):
+            logging.getLogger("google_auth_oauthlib.flow").info(
+                '"GET %s HTTP/1.1" 200 -', callback_url
+            )
+            if fail_after_callback:
+                raise RuntimeError("synthetic OAuth failure")
+            return valid_credentials()
+
+    monkeypatch.setattr(app, "InstalledAppFlow", FakeFlow)
+
+    if fail_after_callback:
+        with pytest.raises(RuntimeError, match="Google OAuth login failed"):
+            app._authorized_token(json.loads(oauth_client_json()), enable_send=False)
+    else:
+        app._authorized_token(json.loads(oauth_client_json()), enable_send=False)
+
+    assert callback_url not in caplog.text
+    assert callback_logger.level == prior_level
 
 
 def oauth_client_json():

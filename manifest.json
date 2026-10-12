@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "google-chat",
   "display_name": "Google Chat",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Local Google Chat MCP tools for reading and explicitly authorized text sends.",
   "long_description": "Reads spaces and messages, and sends plain-text messages or strict thread replies using a caller-supplied idempotency UUID.",
   "author": {

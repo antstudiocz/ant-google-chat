@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import re
 import sys
@@ -170,13 +171,19 @@ def _authorized_token(client_config: dict[str, Any], enable_send: bool) -> str:
             autogenerate_code_verifier=True,
         )
         print("Opening Google authorization in your browser…")
-        credentials = flow.run_local_server(
-            host="127.0.0.1",
-            port=0,
-            open_browser=True,
-            authorization_prompt_message=None,
-            prompt="consent",
-        )
+        callback_logger = logging.getLogger("google_auth_oauthlib.flow")
+        previous_log_level = callback_logger.level
+        callback_logger.setLevel(max(previous_log_level, logging.WARNING))
+        try:
+            credentials = flow.run_local_server(
+                host="127.0.0.1",
+                port=0,
+                open_browser=True,
+                authorization_prompt_message=None,
+                prompt="consent",
+            )
+        finally:
+            callback_logger.setLevel(previous_log_level)
         granted_scopes = _effective_scopes(credentials)
         if not set(scopes).issubset(granted_scopes) or not credentials.refresh_token:
             raise RuntimeError("Google did not return the complete requested grant.")
