@@ -1,11 +1,11 @@
 {
-  "name": "antstudio-google-chat",
+  "name": "ant-google-chat",
   "interface": {
     "displayName": "Antstudio Google Chat"
   },
   "plugins": [
     {
-      "name": "google-chat-plugin",
+      "name": "google-chat",
       "source": {
         "source": "local",
         "path": "./"

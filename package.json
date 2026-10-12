@@ -1,7 +1,7 @@
 {
   "name": "antstudio-google-chat-plugin-packaging",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "devDependencies": {
     "@anthropic-ai/mcpb": "2.1.2"
   },

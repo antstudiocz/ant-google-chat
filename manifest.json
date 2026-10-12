@@ -1,8 +1,8 @@
 {
   "manifest_version": "0.4",
-  "name": "google-chat-plugin",
+  "name": "google-chat",
   "display_name": "Google Chat",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local Google Chat MCP tools for reading and explicitly authorized text sends.",
   "long_description": "Reads spaces and messages, and sends plain-text messages or strict thread replies using a caller-supplied idempotency UUID.",
   "author": {
@@ -11,10 +11,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/antstudiocz/google-chat-plugin.git"
+    "url": "https://github.com/antstudiocz/ant-google-chat.git"
   },
-  "homepage": "https://github.com/antstudiocz/google-chat-plugin",
-  "documentation": "https://github.com/antstudiocz/google-chat-plugin#readme",
+  "homepage": "https://github.com/antstudiocz/ant-google-chat",
+  "documentation": "https://github.com/antstudiocz/ant-google-chat#readme",
   "privacy_policies": ["https://policies.google.com/privacy"],
   "license": "MIT",
   "server": {

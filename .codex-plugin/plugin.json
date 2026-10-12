@@ -1,6 +1,6 @@
 {
-  "name": "google-chat-plugin",
-  "version": "0.1.0",
+  "name": "google-chat",
+  "version": "0.1.1",
   "description": "Read and send Google Chat messages with explicit user authorization.",
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",

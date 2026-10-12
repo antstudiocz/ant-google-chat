@@ -1,14 +1,14 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-  "name": "google-chat-plugin",
-  "version": "0.1.0",
+  "name": "google-chat",
+  "version": "0.1.1",
   "description": "Read Google Chat spaces and messages, and send explicitly authorized text or thread replies.",
   "author": {
     "name": "Antstudio",
     "url": "https://github.com/antstudiocz"
   },
-  "homepage": "https://github.com/antstudiocz/google-chat-plugin",
-  "repository": "https://github.com/antstudiocz/google-chat-plugin",
+  "homepage": "https://github.com/antstudiocz/ant-google-chat",
+  "repository": "https://github.com/antstudiocz/ant-google-chat",
   "license": "MIT",
   "keywords": ["google-chat", "mcp", "codex", "claude"],
   "extensions": {
@@ -20,7 +20,7 @@
         "developerName": "Antstudio",
         "category": "Productivity",
         "capabilities": ["Read", "Write"],
-        "websiteURL": "https://github.com/antstudiocz/google-chat-plugin"
+        "websiteURL": "https://github.com/antstudiocz/ant-google-chat"
       }
     }
   }

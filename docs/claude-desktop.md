@@ -2,7 +2,7 @@
 
 The recommended path is opening `dist/google-chat-plugin.mcpb` in Claude Desktop. This manual fallback is for hosts where MCPB is unavailable.
 
-Install `uv`, clone this repository to a stable local path, and run `./scripts/setup.sh`. Run `google-chat-plugin login` using the bundled project's locked environment, then add this server entry to Claude Desktop's MCP configuration. Replace `/absolute/path/to/google-chat-plugin` with the checkout path:
+Install `uv`, clone this repository to a stable local path, and run `./scripts/setup.sh`. Run `google-chat-plugin login` using the bundled project's locked environment, then add this server entry to Claude Desktop's MCP configuration. Replace `/absolute/path/to/ant-google-chat` with the checkout path:
 
 ```json
 {
@@ -12,13 +12,13 @@ Install `uv`, clone this repository to a stable local path, and run `./scripts/s
       "args": [
         "run",
         "--project",
-        "/absolute/path/to/google-chat-plugin",
+        "/absolute/path/to/ant-google-chat",
         "--frozen",
         "python",
         "-m",
         "google_chat_plugin.server"
       ],
-      "cwd": "/absolute/path/to/google-chat-plugin"
+      "cwd": "/absolute/path/to/ant-google-chat"
     }
   }
 }

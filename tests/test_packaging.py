@@ -21,7 +21,15 @@ def test_platform_manifests_declare_server_and_plugin_consistently():
     openai_mcp = read_json("mcp.json")
     codex_mcp = read_json(".mcp.json")
 
-    assert portable["name"] == codex["name"] == claude["name"] == "google-chat-plugin"
+    assert portable["name"] == codex["name"] == claude["name"] == "google-chat"
+    assert portable["version"] == codex["version"] == claude["version"] == "0.1.1"
+    claude_marketplace = read_json(".claude-plugin/marketplace.json")
+    codex_marketplace = read_json(".agents/plugins/marketplace.json")
+    assert claude_marketplace["name"] == codex_marketplace["name"] == "ant-google-chat"
+    assert claude_marketplace["plugins"][0]["name"] == "google-chat"
+    assert claude_marketplace["plugins"][0]["source"] == "./"
+    assert codex_marketplace["plugins"][0]["name"] == "google-chat"
+    assert codex_marketplace["plugins"][0]["source"] == {"source": "local", "path": "./"}
     assert openai_mcp["mcpServers"]["google-chat"]["type"] == "stdio"
     assert codex_mcp["mcpServers"]["google-chat"]["command"] == "uv"
     assert claude["mcpServers"]["google-chat"]["command"] == "uv"
@@ -32,6 +40,8 @@ def test_platform_manifests_declare_server_and_plugin_consistently():
 def test_mcpb_uses_uv_runtime_and_pinned_project_lock():
     manifest = read_json("manifest.json")
     assert manifest["manifest_version"] == "0.4"
+    assert manifest["name"] == "google-chat"
+    assert manifest["version"] == "0.1.1"
     assert manifest["server"]["type"] == "uv"
     assert (ROOT / "uv.lock").is_file()
 

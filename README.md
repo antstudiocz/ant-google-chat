@@ -2,6 +2,29 @@
 
 A local Google Chat MCP server for Codex, Claude Code, and Claude Desktop. It reads spaces and messages and can send plain-text messages or strict replies to threads after the user authorizes the destination and content.
 
+## Quick install with Claude Code
+
+In Claude Code, add the marketplace and install the plugin:
+
+```text
+/plugin marketplace add antstudiocz/ant-google-chat
+/plugin install google-chat@ant-google-chat
+```
+
+The equivalent shell commands are:
+
+```sh
+claude plugin marketplace add antstudiocz/ant-google-chat
+claude plugin install google-chat@ant-google-chat
+```
+
+For Codex CLI, use:
+
+```sh
+codex plugin marketplace add antstudiocz/ant-google-chat
+codex plugin add google-chat@ant-google-chat
+```
+
 The integration runs on the user's machine and uses their Google OAuth Desktop client and account. OAuth client files and refresh tokens stay outside this repository in `~/.config/google-chat-plugin/` (or the directory named by `GOOGLE_CHAT_PLUGIN_HOME`). On POSIX, the token directory uses owner-only permissions (`0700`) and token files are atomically written with owner-only permissions (`0600`). On Windows, the plugin relies on the current user's profile ACL inheritance; verify that ACL if the profile is shared. This plugin does not copy data from another local MCP installation.
 
 ## Requirements
@@ -43,8 +66,8 @@ The server rejects malformed resource names, cross-space threads, empty or overs
 The repository includes the portable Agent Plugins files (`plugin.json`, `mcp.json`) and the Codex compatibility fallback (`.codex-plugin/plugin.json`, `.mcp.json`). They launch the local server with `uv`, resolve the project from Codex's `PLUGIN_ROOT`, and run in stdio mode. Install from the repository marketplace with:
 
 ```sh
-codex plugin marketplace add antstudiocz/google-chat-plugin
-codex plugin add google-chat-plugin@antstudio-google-chat
+codex plugin marketplace add antstudiocz/ant-google-chat
+codex plugin add google-chat@ant-google-chat
 ```
 
 Start a new conversation after installing or changing a plugin.
@@ -56,8 +79,8 @@ Codex's universal public plugin directory requires a remotely hosted HTTPS MCP e
 The root `.claude-plugin/plugin.json` is a Claude Code plugin manifest, and `.claude-plugin/marketplace.json` points at this GitHub repository. With Claude Code installed, register the marketplace and install the plugin:
 
 ```sh
-claude plugin marketplace add antstudiocz/google-chat-plugin
-claude plugin install google-chat-plugin@antstudio-google-chat
+claude plugin marketplace add antstudiocz/ant-google-chat
+claude plugin install google-chat@ant-google-chat
 ```
 
 Claude Code needs `uv` on its PATH. For a checkout used directly during development, validate it with `claude plugin validate .`; plugin installation and tool availability still need to be checked in the target Claude Code host.
