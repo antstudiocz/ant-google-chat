@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "google-chat": {
+      "command": "uv",
+      "args": ["run", "--project", "${PLUGIN_ROOT}", "--frozen", "python", "-m", "google_chat_plugin.server"],
+      "cwd": "${PLUGIN_ROOT}"
+    }
+  }
+}

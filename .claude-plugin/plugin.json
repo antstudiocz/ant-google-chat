@@ -1,0 +1,22 @@
+{
+  "name": "google-chat-plugin",
+  "displayName": "Google Chat",
+  "version": "0.1.0",
+  "description": "Read Google Chat and send explicitly authorized text messages and thread replies.",
+  "author": {
+    "name": "Antstudio",
+    "url": "https://github.com/antstudiocz"
+  },
+  "homepage": "https://github.com/antstudiocz/google-chat-plugin",
+  "repository": "https://github.com/antstudiocz/google-chat-plugin",
+  "license": "MIT",
+  "keywords": ["google-chat", "mcp"],
+  "skills": ["./skills/"],
+  "mcpServers": {
+    "google-chat": {
+      "command": "uv",
+      "args": ["run", "--project", "${CLAUDE_PLUGIN_ROOT}", "--frozen", "python", "-m", "google_chat_plugin.server"],
+      "cwd": "${CLAUDE_PLUGIN_ROOT}"
+    }
+  }
+}

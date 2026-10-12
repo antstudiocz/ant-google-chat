@@ -1,0 +1,11 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "google-chat": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "--project", "${PLUGIN_ROOT}", "--frozen", "python", "-m", "google_chat_plugin.server"],
+      "cwd": "${PLUGIN_ROOT}"
+    }
+  }
+}

@@ -1,0 +1,17 @@
+.git/
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+tests/
+dist/
+build/
+*.egg-info/
+.private/
+token.json
+*client_secret*.json
+.env*
+docs/
+node_modules/
+*.log
+chat-export*/

@@ -1,0 +1,17 @@
+{
+  "name": "antstudio-google-chat",
+  "description": "Antstudio local coding-agent plugins",
+  "owner": {
+    "name": "Antstudio"
+  },
+  "plugins": [
+    {
+      "name": "google-chat-plugin",
+      "source": {
+        "source": "github",
+        "repo": "antstudiocz/google-chat-plugin"
+      },
+      "description": "Read Google Chat and send explicitly authorized messages."
+    }
+  ]
+}
