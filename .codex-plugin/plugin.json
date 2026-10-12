@@ -1,12 +1,17 @@
 {
   "name": "google-chat",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Read and send Google Chat messages with explicit user authorization.",
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",
+  "extensions": {
+    "com.openai": {
+      "onboardingSkill": "./skills/setup/SKILL.md"
+    }
+  },
   "interface": {
     "displayName": "Google Chat",
-    "shortDescription": "Read and send Google Chat messages",
+    "shortDescription": "Google Chat with approval",
     "longDescription": "Local Google Chat access using your own OAuth consent and credentials.",
     "developerName": "Antstudio",
     "category": "Productivity",

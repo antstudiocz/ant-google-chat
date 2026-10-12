@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import traceback
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -76,7 +78,13 @@ class Service:
 
 
 def valid_credentials(scopes=None):
-    return Credentials(token="synthetic", scopes=list(scopes or app.READ_SCOPES))
+    effective_scopes = list(app.READ_SCOPES if scopes is None else scopes)
+    return Credentials(
+        token="synthetic",
+        refresh_token="synthetic-refresh",
+        scopes=effective_scopes,
+        granted_scopes=effective_scopes,
+    )
 
 
 def test_list_spaces_and_message_filters_are_compact(monkeypatch):
@@ -210,11 +218,13 @@ def test_missing_write_scope_does_not_block_read_credentials(monkeypatch):
         app._chat_service(for_send=True)
 
 
-def test_load_preserves_scopes_recorded_in_local_token_without_upgrading(monkeypatch, tmp_path):
+@pytest.mark.parametrize("saved_scopes", [list(app.READ_SCOPES), []])
+def test_load_preserves_scopes_recorded_in_local_token_without_upgrading(
+    monkeypatch, tmp_path, saved_scopes
+):
     token_path = tmp_path / "token.json"
     token_path.write_text(
-        json.dumps({"scopes": list(app.READ_SCOPES), "refresh_token": "synthetic"}),
-        encoding="utf-8",
+        json.dumps({"scopes": saved_scopes, "refresh_token": "synthetic"}), encoding="utf-8"
     )
     received = {}
 
@@ -225,35 +235,316 @@ def test_load_preserves_scopes_recorded_in_local_token_without_upgrading(monkeyp
     monkeypatch.setattr(app, "TOKEN_PATH", token_path)
     monkeypatch.setattr(Credentials, "from_authorized_user_file", fake_load)
     assert app.load_credentials().valid
-    assert received["scopes"] == app.READ_SCOPES
+    assert received["scopes"] == tuple(saved_scopes)
     assert app.SEND_SCOPE not in received["scopes"]
 
 
+def test_empty_explicit_grant_does_not_fall_back_to_requested_send_scope():
+    credentials = Credentials(
+        token="synthetic",
+        scopes=[*app.READ_SCOPES, app.SEND_SCOPE],
+        granted_scopes=[],
+    )
+    assert not app._has_scope(credentials, app.SEND_SCOPE)
+
+
+def test_refresh_persists_effective_grant_when_provider_reduces_scopes(monkeypatch, tmp_path):
+    token_path = tmp_path / "token.json"
+    scopes = [*app.READ_SCOPES, app.SEND_SCOPE]
+    token_path.write_text(json.dumps({"scopes": scopes}), encoding="utf-8")
+    credentials = Credentials(
+        token="old-token",
+        refresh_token="synthetic-refresh",
+        scopes=scopes,
+        granted_scopes=scopes,
+        expiry=(datetime.now(UTC) - timedelta(minutes=1)).replace(tzinfo=None),
+    )
+    persisted = {}
+
+    def from_file(_path, _scopes):
+        return credentials
+
+    def refresh(instance, _request):
+        instance.token = "new-token"
+        instance.expiry = (datetime.now(UTC) + timedelta(hours=1)).replace(tzinfo=None)
+        instance._granted_scopes = list(app.READ_SCOPES)
+
+    monkeypatch.setattr(app, "TOKEN_PATH", token_path)
+    monkeypatch.setattr(Credentials, "from_authorized_user_file", from_file)
+    monkeypatch.setattr(Credentials, "refresh", refresh)
+    monkeypatch.setattr(
+        app, "_atomic_write_token", lambda contents: persisted.update(value=contents)
+    )
+
+    result = app.load_credentials()
+
+    saved = json.loads(persisted["value"])
+    assert saved["scopes"] == list(app.READ_SCOPES)
+    assert not app._has_scope(result, app.SEND_SCOPE)
+
+
 @pytest.mark.parametrize("enable_send", [False, True])
-def test_login_requests_send_scope_only_when_opted_in(monkeypatch, tmp_path, enable_send):
+def test_login_requests_exact_scope_set_and_persists_only_a_complete_grant(
+    monkeypatch, tmp_path, enable_send
+):
     requested = {}
 
     class FakeFlow:
         @classmethod
-        def from_client_secrets_file(cls, _path, scopes):
+        def from_client_config(cls, _config, scopes, **kwargs):
             requested["scopes"] = tuple(scopes)
+            requested["pkce"] = kwargs
             return cls()
 
-        def run_local_server(self, **_kwargs):
-            return Mock(to_json=lambda: "synthetic OAuth contents")
+        def run_local_server(self, **kwargs):
+            requested["flow_options"] = kwargs
+            return valid_credentials(requested["scopes"])
 
     monkeypatch.setattr(app, "InstalledAppFlow", FakeFlow)
     monkeypatch.setattr(app, "CONFIG_DIR", tmp_path / "config")
     monkeypatch.setattr(app, "TOKEN_PATH", tmp_path / "config" / "token.json")
     monkeypatch.setattr(app, "_atomic_write_token", lambda value: requested.update(token=value))
     client = tmp_path / "desktop-client.json"
-    client.write_text("{}", encoding="utf-8")
+    client.write_text(
+        json.dumps(
+            {
+                "installed": {
+                    "client_id": "synthetic.apps.googleusercontent.com",
+                    "client_secret": "synthetic-secret",
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                    "redirect_uris": ["http://localhost"],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
 
     app.login(client, enable_send)
 
     expected = (*app.READ_SCOPES, app.SEND_SCOPE) if enable_send else app.READ_SCOPES
     assert requested["scopes"] == expected
-    assert requested["token"] == "synthetic OAuth contents"
+    assert requested["pkce"] == {"autogenerate_code_verifier": True}
+    assert requested["flow_options"] == {
+        "host": "127.0.0.1",
+        "port": 0,
+        "open_browser": True,
+        "authorization_prompt_message": None,
+        "prompt": "consent",
+    }
+    assert json.loads(requested["token"])["refresh_token"] == "synthetic-refresh"
+    assert json.loads(requested["token"])["scopes"] == list(expected)
+
+
+def oauth_client_json():
+    return json.dumps(
+        {
+            "installed": {
+                "client_id": "synthetic.apps.googleusercontent.com",
+                "client_secret": "synthetic-secret",
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "redirect_uris": ["http://localhost"],
+            }
+        }
+    )
+
+
+def test_setup_stores_only_validated_google_client_with_private_permissions(monkeypatch, tmp_path):
+    source = tmp_path / "provided.json"
+    source.write_text(oauth_client_json(), encoding="utf-8")
+    config_dir = tmp_path / "config"
+    token_path = config_dir / "token.json"
+    monkeypatch.setattr(app, "CONFIG_DIR", config_dir)
+    monkeypatch.setattr(app, "DEFAULT_CREDENTIALS_PATH", config_dir / "client_secret.json")
+    monkeypatch.setattr(app, "TOKEN_PATH", token_path)
+    login_calls = []
+    monkeypatch.setattr(
+        app,
+        "_authorized_token",
+        lambda config, send: login_calls.append((config, send)) or '{"token":"synthetic"}',
+    )
+
+    app.setup(source, enable_send=True)
+
+    stored = json.loads((config_dir / "client_secret.json").read_text())
+    assert stored == json.loads(oauth_client_json())
+    assert (config_dir / "client_secret.json").stat().st_mode & 0o777 == 0o600
+    assert config_dir.stat().st_mode & 0o777 == 0o700
+    assert login_calls == [(json.loads(oauth_client_json()), True)]
+
+
+def test_setup_rejects_non_google_endpoint_without_changing_saved_client(monkeypatch, tmp_path):
+    source = tmp_path / "provided.json"
+    value = json.loads(oauth_client_json())
+    value["installed"]["token_uri"] = "https://example.invalid/token"
+    source.write_text(json.dumps(value), encoding="utf-8")
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    saved_client = config_dir / "client_secret.json"
+    saved_client.write_text("previous-client", encoding="utf-8")
+    monkeypatch.setattr(app, "CONFIG_DIR", config_dir)
+    monkeypatch.setattr(app, "DEFAULT_CREDENTIALS_PATH", saved_client)
+
+    with pytest.raises(RuntimeError, match="valid Google Desktop"):
+        app.setup(source)
+
+    assert saved_client.read_text(encoding="utf-8") == "previous-client"
+
+
+@pytest.mark.parametrize("failure", ["declined", "partial", "no_refresh"])
+def test_failed_or_incomplete_login_preserves_existing_token(monkeypatch, tmp_path, failure):
+    class FakeFlow:
+        @classmethod
+        def from_client_config(cls, _config, scopes, **_kwargs):
+            cls.scopes = scopes
+            return cls()
+
+        def run_local_server(self, **_kwargs):
+            if failure == "declined":
+                raise RuntimeError("private-provider-response")
+            scopes = self.scopes[:-1] if failure == "partial" else self.scopes
+            if failure == "no_refresh":
+                return Credentials(
+                    token="synthetic",
+                    scopes=list(scopes),
+                    granted_scopes=list(scopes),
+                )
+            if failure == "partial":
+                return Credentials(
+                    token="synthetic",
+                    refresh_token="synthetic-refresh",
+                    scopes=list(self.scopes),
+                    granted_scopes=list(scopes),
+                )
+            credentials = valid_credentials(scopes)
+            return credentials
+
+    monkeypatch.setattr(app, "InstalledAppFlow", FakeFlow)
+    config_dir = tmp_path / "config"
+    token_path = config_dir / "token.json"
+    monkeypatch.setattr(app, "CONFIG_DIR", config_dir)
+    monkeypatch.setattr(app, "TOKEN_PATH", token_path)
+    token_path.parent.mkdir()
+    token_path.write_text("existing-token-sentinel", encoding="utf-8")
+    client = tmp_path / "client.json"
+    client.write_text(oauth_client_json(), encoding="utf-8")
+
+    with pytest.raises(RuntimeError) as raised:
+        app.login(client, enable_send=True)
+
+    assert "private-provider-response" not in str(raised.value)
+    assert raised.value.__suppress_context__ is True
+    assert token_path.read_text(encoding="utf-8") == "existing-token-sentinel"
+
+
+def test_setup_cancellation_preserves_saved_client_and_token(monkeypatch, tmp_path):
+    source = tmp_path / "provided.json"
+    source.write_text(oauth_client_json(), encoding="utf-8")
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    client_path = config_dir / "client_secret.json"
+    client_path.write_text("previous-client-sentinel", encoding="utf-8")
+    token_path = config_dir / "token.json"
+    token_path.write_text("previous-token-sentinel", encoding="utf-8")
+    monkeypatch.setattr(app, "CONFIG_DIR", config_dir)
+    monkeypatch.setattr(app, "DEFAULT_CREDENTIALS_PATH", client_path)
+    monkeypatch.setattr(app, "TOKEN_PATH", token_path)
+
+    def canceled_login(*_args, **_kwargs):
+        raise RuntimeError("safe login error")
+
+    monkeypatch.setattr(app, "_authorized_token", canceled_login)
+    with pytest.raises(RuntimeError, match="safe login error"):
+        app.setup(source)
+
+    assert client_path.read_text(encoding="utf-8") == "previous-client-sentinel"
+    assert token_path.read_text(encoding="utf-8") == "previous-token-sentinel"
+
+
+def test_connection_status_reports_cached_grant_without_token_values(monkeypatch, tmp_path):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    token_path = config_dir / "token.json"
+    token_path.write_text(
+        json.dumps(
+            {
+                "token": "access-secret-sentinel",
+                "refresh_token": "refresh-secret-sentinel",
+                "scopes": list(app.READ_SCOPES),
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(app, "CONFIG_DIR", config_dir)
+    monkeypatch.setattr(app, "TOKEN_PATH", token_path)
+    monkeypatch.setattr(app, "DEFAULT_CREDENTIALS_PATH", config_dir / "client_secret.json")
+
+    status = app.connection_status()
+
+    assert status == {
+        "configured": False,
+        "signed_in": True,
+        "grant": "read_only",
+        "token_state": "cached",
+        "live_verified": False,
+    }
+    assert "secret-sentinel" not in json.dumps(status)
+
+
+def test_connection_status_handles_malformed_cache_without_exposing_contents(monkeypatch, tmp_path):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    token_path = config_dir / "token.json"
+    token_path.write_text(
+        json.dumps({"scopes": [{"private": "sentinel"}], "expiry": "not-a-date"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(app, "CONFIG_DIR", config_dir)
+    monkeypatch.setattr(app, "TOKEN_PATH", token_path)
+    monkeypatch.setattr(app, "DEFAULT_CREDENTIALS_PATH", config_dir / "client_secret.json")
+
+    status = app.connection_status()
+
+    assert status["grant"] == "unknown"
+    assert status["live_verified"] is False
+    assert "sentinel" not in json.dumps(status)
+
+
+def test_cli_status_is_safe_json_and_does_not_contact_google(tmp_path):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "token.json").write_text(
+        json.dumps(
+            {
+                "token": "access-secret-sentinel",
+                "refresh_token": "refresh-secret-sentinel",
+                "scopes": list(app.READ_SCOPES),
+            }
+        ),
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env["GOOGLE_CHAT_PLUGIN_HOME"] = str(config_dir)
+    completed = subprocess.run(
+        [sys.executable, "-m", "google_chat_plugin.server", "status"],
+        check=False,
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        timeout=10,
+        env=env,
+    )
+
+    assert completed.returncode == 0
+    assert json.loads(completed.stdout) == {
+        "configured": False,
+        "signed_in": True,
+        "grant": "read_only",
+        "token_state": "cached",
+        "live_verified": False,
+    }
+    assert "secret-sentinel" not in completed.stdout + completed.stderr
 
 
 def test_invalid_time_filter_rejected_before_google(monkeypatch):
@@ -288,14 +579,14 @@ def test_refresh_error_during_api_call_is_sanitized():
 def test_oauth_login_errors_are_sanitized(monkeypatch, tmp_path):
     class Flow:
         @classmethod
-        def from_client_secrets_file(cls, *_args, **_kwargs):
+        def from_client_config(cls, *_args, **_kwargs):
             raise RuntimeError("private-sentinel-token-body")
 
     monkeypatch.setattr(app, "InstalledAppFlow", Flow)
     monkeypatch.setattr(app, "CONFIG_DIR", tmp_path / "config")
     monkeypatch.setattr(app, "TOKEN_PATH", tmp_path / "config" / "token.json")
     client = tmp_path / "oauth.json"
-    client.write_text("{}", encoding="utf-8")
+    client.write_text(oauth_client_json(), encoding="utf-8")
     with pytest.raises(RuntimeError) as raised:
         app.login(client)
     assert "private-sentinel" not in str(raised.value)
@@ -338,6 +629,7 @@ asyncio.run(main())
     )
     assert completed.returncode == 0, completed.stderr
     assert json.loads(completed.stdout.strip().splitlines()[-1]) == [
+        "get_connection_status",
         "get_message",
         "list_messages",
         "list_spaces",

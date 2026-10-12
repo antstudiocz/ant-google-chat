@@ -12,6 +12,7 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from google.auth.exceptions import GoogleAuthError, RefreshError
 from google.auth.transport.requests import Request
@@ -39,23 +40,154 @@ mcp = FastMCP("google-chat")
 
 def _secure_config_dir() -> None:
     CONFIG_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
-    CONFIG_DIR.chmod(0o700)
+    if os.name == "posix":
+        CONFIG_DIR.chmod(0o700)
 
 
-def _atomic_write_token(contents: str) -> None:
+def _atomic_write_private_file(path: Path, contents: str) -> None:
     _secure_config_dir()
-    descriptor, temporary_name = tempfile.mkstemp(prefix=".token-", dir=CONFIG_DIR)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}-", dir=CONFIG_DIR)
     temporary = Path(temporary_name)
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
             stream.write(contents)
             stream.flush()
             os.fsync(stream.fileno())
-        temporary.chmod(0o600)
-        temporary.replace(TOKEN_PATH)
-        TOKEN_PATH.chmod(0o600)
+        if os.name == "posix":
+            temporary.chmod(0o600)
+        temporary.replace(path)
+        if os.name == "posix":
+            path.chmod(0o600)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def _atomic_write_token(contents: str) -> None:
+    _atomic_write_private_file(TOKEN_PATH, contents)
+
+
+def _effective_scopes(credentials: Credentials) -> tuple[str, ...]:
+    scopes = credentials.granted_scopes
+    if scopes is None:
+        scopes = credentials.scopes or ()
+    if isinstance(scopes, str):
+        scopes = scopes.split()
+    return tuple(scope for scope in scopes if isinstance(scope, str))
+
+
+def _google_endpoint(value: Any, hosts: set[str], paths: set[str]) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        parsed = urlsplit(value)
+        return (
+            parsed.scheme == "https"
+            and parsed.hostname in hosts
+            and parsed.path in paths
+            and parsed.username is None
+            and parsed.password is None
+            and not parsed.query
+            and not parsed.fragment
+        )
+    except ValueError:
+        return False
+
+
+def _read_oauth_client(path: Path) -> dict[str, Any]:
+    try:
+        client_file = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        raise RuntimeError("OAuth client file could not be read as valid JSON.") from None
+    if not isinstance(client_file, dict) or not isinstance(client_file.get("installed"), dict):
+        raise RuntimeError("Use a Google OAuth Desktop app client JSON file.")  # noqa: TRY004
+
+    installed = client_file["installed"]
+    if (
+        not isinstance(installed.get("client_id"), str)
+        or not installed["client_id"].endswith(".apps.googleusercontent.com")
+        or not isinstance(installed.get("client_secret"), str)
+        or not installed["client_secret"]
+        or not _google_endpoint(
+            installed.get("auth_uri"),
+            {"accounts.google.com"},
+            {"/o/oauth2/auth", "/o/oauth2/v2/auth"},
+        )
+        or not _google_endpoint(
+            installed.get("token_uri"),
+            {"oauth2.googleapis.com", "www.googleapis.com"},
+            {"/token", "/oauth2/v4/token"},
+        )
+    ):
+        raise RuntimeError(
+            "OAuth client file must contain a valid Google Desktop client configuration."
+        )
+
+    redirect_uris = installed.get("redirect_uris")
+    if not isinstance(redirect_uris, list) or not redirect_uris:
+        raise RuntimeError("OAuth client file must contain a Desktop redirect URI.")
+    for redirect_uri in redirect_uris:
+        if not isinstance(redirect_uri, str):
+            raise RuntimeError("OAuth client file must contain a Desktop redirect URI.")  # noqa: TRY004
+        try:
+            parsed = urlsplit(redirect_uri)
+        except ValueError:
+            raise RuntimeError("OAuth client file must contain a Desktop redirect URI.") from None
+        if parsed.scheme != "http" or parsed.hostname not in {
+            "localhost",
+            "127.0.0.1",
+            "[::1]",
+            "::1",
+        }:
+            raise RuntimeError("OAuth client file must use a local Desktop redirect URI.")
+
+    # Keep only the fields consumed by the installed-app flow.
+    return {
+        "installed": {
+            key: installed[key]
+            for key in ("client_id", "client_secret", "auth_uri", "token_uri", "redirect_uris")
+        }
+    }
+
+
+def setup(credentials_path: Path, enable_send: bool = False) -> None:
+    """Validate a Desktop client, complete OAuth, and store it after successful consent."""
+    client_config = _read_oauth_client(credentials_path)
+    token_contents = _authorized_token(client_config, enable_send)
+    _atomic_write_token(token_contents)
+    _atomic_write_private_file(
+        DEFAULT_CREDENTIALS_PATH,
+        json.dumps(client_config, separators=(",", ":")),
+    )
+    print(f"Google Chat login saved in {TOKEN_PATH}.")
+
+
+def _authorized_token(client_config: dict[str, Any], enable_send: bool) -> str:
+    scopes = (*READ_SCOPES, SEND_SCOPE) if enable_send else READ_SCOPES
+    try:
+        flow = InstalledAppFlow.from_client_config(
+            client_config,
+            list(scopes),
+            autogenerate_code_verifier=True,
+        )
+        print("Opening Google authorization in your browser…")
+        credentials = flow.run_local_server(
+            host="127.0.0.1",
+            port=0,
+            open_browser=True,
+            authorization_prompt_message=None,
+            prompt="consent",
+        )
+        granted_scopes = _effective_scopes(credentials)
+        if not set(scopes).issubset(granted_scopes) or not credentials.refresh_token:
+            raise RuntimeError("Google did not return the complete requested grant.")
+        token_data = json.loads(credentials.to_json())
+        token_data["scopes"] = list(granted_scopes)
+        return json.dumps(token_data)
+    except Exception:  # noqa: BLE001 - OAuth providers can expose secrets in arbitrary exception text.
+        raise RuntimeError(
+            "Google OAuth login failed or did not grant all requested access. The saved login was not changed. "
+            "Check the Desktop client, Chat API access, and consent screen."
+        ) from None
 
 
 def login(credentials_path: Path, enable_send: bool = False) -> None:
@@ -65,17 +197,77 @@ def login(credentials_path: Path, enable_send: bool = False) -> None:
             "Google OAuth Desktop client JSON was not found. Download one from Google Cloud "
             "and pass its path with --credentials."
         )
-    scopes = (*READ_SCOPES, SEND_SCOPE) if enable_send else READ_SCOPES
-    try:
-        _secure_config_dir()
-        flow = InstalledAppFlow.from_client_secrets_file(str(credentials_path), list(scopes))
-        credentials = flow.run_local_server(host="127.0.0.1", port=0, open_browser=True)
-        _atomic_write_token(credentials.to_json())
-    except Exception:  # noqa: BLE001 - OAuth providers can expose secrets in arbitrary exception text.
-        raise RuntimeError(
-            "Google OAuth login failed. Check the Desktop client file, Chat API access, and consent screen."
-        ) from None
+    client_config = _read_oauth_client(credentials_path)
+    token_contents = _authorized_token(client_config, enable_send)
+    _atomic_write_token(token_contents)
     print(f"Google Chat login saved in {TOKEN_PATH}.")
+
+
+def connection_status() -> dict[str, Any]:
+    """Report local cached setup state without contacting Google or exposing credentials."""
+    try:
+        _read_oauth_client(DEFAULT_CREDENTIALS_PATH)
+        configured = True
+    except RuntimeError:
+        configured = False
+    status: dict[str, Any] = {
+        "configured": configured,
+        "signed_in": False,
+        "grant": "none",
+        "token_state": "missing",
+        "live_verified": False,
+    }
+    if not TOKEN_PATH.is_file():
+        return status
+    try:
+        token_data = json.loads(TOKEN_PATH.read_text(encoding="utf-8"))
+        if not isinstance(token_data, dict):
+            raise TypeError("OAuth token must be a JSON object.")
+        raw_scopes = token_data.get("scopes")
+        scopes = (
+            set(raw_scopes)
+            if isinstance(raw_scopes, list) and all(isinstance(scope, str) for scope in raw_scopes)
+            else set()
+        )
+        if scopes.issuperset((*READ_SCOPES, SEND_SCOPE)):
+            grant = "read_and_send"
+        elif scopes.issuperset(READ_SCOPES):
+            grant = "read_only"
+        else:
+            grant = "unknown"
+        has_refresh = isinstance(token_data.get("refresh_token"), str) and bool(
+            token_data.get("refresh_token")
+        )
+        expiry = token_data.get("expiry")
+        expired = False
+        if isinstance(expiry, str):
+            try:
+                expiry_time = datetime.fromisoformat(expiry)
+                if expiry_time.tzinfo is None:
+                    expiry_time = expiry_time.replace(tzinfo=UTC)
+                expired = expiry_time <= datetime.now(UTC)
+            except ValueError:
+                grant = "unknown"
+        elif expiry is not None:
+            grant = "unknown"
+            status["token_state"] = "unreadable"
+        if status["token_state"] == "unreadable":
+            token_state = "unreadable"
+        elif expired and has_refresh:
+            token_state = "refreshable"
+        elif expired:
+            token_state = "expired"
+        else:
+            token_state = "cached"
+        status.update(
+            signed_in=has_refresh or bool(token_data.get("token")),
+            grant=grant,
+            token_state=token_state,
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError, TypeError):
+        status["token_state"] = "unreadable"
+        status["grant"] = "unknown"
+    return status
 
 
 def load_credentials() -> Credentials:
@@ -85,11 +277,15 @@ def load_credentials() -> Credentials:
         # Preserve the exact saved scope grant; supplying broader requested scopes here could
         # make a read-only token appear write-capable without Google's consent.
         token_data = json.loads(TOKEN_PATH.read_text(encoding="utf-8"))
-        saved_scopes = token_data.get("scopes") or READ_SCOPES
+        saved_scopes = token_data.get("scopes")
+        if saved_scopes is None:
+            saved_scopes = READ_SCOPES
         credentials = Credentials.from_authorized_user_file(str(TOKEN_PATH), saved_scopes)
         if credentials.expired and credentials.refresh_token:
             credentials.refresh(Request())
-            _atomic_write_token(credentials.to_json())
+            token_data = json.loads(credentials.to_json())
+            token_data["scopes"] = list(_effective_scopes(credentials))
+            _atomic_write_token(json.dumps(token_data))
         if not credentials.valid:
             raise RuntimeError("Saved Google credentials are no longer valid. Run login again.")
         return credentials
@@ -102,8 +298,7 @@ def load_credentials() -> Credentials:
 
 
 def _has_scope(credentials: Credentials, scope: str) -> bool:
-    granted = credentials.granted_scopes or credentials.scopes or ()
-    return scope in granted
+    return scope in _effective_scopes(credentials)
 
 
 def _chat_service(*, for_send: bool = False) -> Any:
@@ -171,6 +366,12 @@ def _validate_time(value: str | None, label: str) -> str | None:
 
 def _compact(resource: dict[str, Any], fields: tuple[str, ...]) -> dict[str, Any]:
     return {key: resource[key] for key in fields if key in resource}
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False))
+def get_connection_status() -> dict[str, Any]:
+    """Show whether local setup and a cached grant exist; this does not contact Google."""
+    return connection_status()
 
 
 def _space_from_child(resource: str) -> str:
@@ -290,6 +491,15 @@ def send_message(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command")
+    setup_parser = commands.add_parser(
+        "setup", help="Store a Google OAuth Desktop client and sign in"
+    )
+    setup_parser.add_argument("--credentials", type=Path, required=True)
+    setup_parser.add_argument(
+        "--enable-send",
+        action="store_true",
+        help="also request the chat.messages.create OAuth scope",
+    )
     login_parser = commands.add_parser("login", help="Sign in to Google Chat")
     login_parser.add_argument("--credentials", type=Path, default=DEFAULT_CREDENTIALS_PATH)
     login_parser.add_argument(
@@ -297,13 +507,20 @@ def main() -> None:
         action="store_true",
         help="also request the chat.messages.create OAuth scope",
     )
+    commands.add_parser("status", help="Show local setup and cached permission status")
     args = parser.parse_args()
-    if args.command == "login":
+    if args.command in {"setup", "login"}:
         try:
-            login(args.credentials.expanduser(), args.enable_send)
+            if args.command == "setup":
+                setup(args.credentials.expanduser(), args.enable_send)
+            else:
+                login(args.credentials.expanduser(), args.enable_send)
         except RuntimeError as exc:
             print(str(exc), file=sys.stderr)
             raise SystemExit(1) from None
+        return
+    if args.command == "status":
+        print(json.dumps(connection_status(), indent=2, sort_keys=True))
         return
     mcp.run(transport="stdio")
 
