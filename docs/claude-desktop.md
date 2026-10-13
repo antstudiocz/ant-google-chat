@@ -1,6 +1,18 @@
-# Claude Desktop MCP configuration fallback
+# Claude Desktop
 
-The recommended path is opening `dist/google-chat-plugin.mcpb` in Claude Desktop. This manual fallback is for hosts where MCPB is unavailable.
+[Back to the overview](../README.md) · [Google sign-in](setup.md)
+
+## Install the release bundle
+
+1. Download `google-chat-plugin.mcpb` from the [latest release](https://github.com/antstudiocz/ant-google-chat/releases/latest).
+2. Open it in Claude Desktop to install the plugin.
+3. Complete [Google sign-in](setup.md) before using the read or send tools. A checkout can run the setup CLI; the bundle uses the same private configuration directory.
+
+The bundle is unsigned and has been validated with the official MCPB CLI. Loading it in Claude Desktop's UI remains unverified. If your host version does not support the bundle, use the manual configuration below.
+
+For building a bundle yourself, see [development and packaging](development.md).
+
+## Manual MCP configuration
 
 Install `uv`, clone this repository to a stable local path, and run `./scripts/setup.sh`. Before adding the server, run setup with the bundled project's locked environment. Replace the two paths with your checkout and privately downloaded Desktop client JSON:
 
@@ -8,7 +20,7 @@ Install `uv`, clone this repository to a stable local path, and run `./scripts/s
 uv run --project "/absolute/path/to/ant-google-chat" --frozen google-chat-plugin setup --credentials "/absolute/path/to/desktop-client.json"
 ```
 
-This validates the client and opens the system browser for read-only consent. After complete consent, it stores a private local copy. Add the MCP entry below to Claude Desktop's configuration, replacing `/absolute/path/to/ant-google-chat` with the checkout path:
+This validates the client and opens the system browser for read-only consent. After complete consent, it stores a private local copy. Add the `google-chat` entry below to the existing `mcpServers` object in Claude Desktop's configuration, preserving other entries. Replace `/absolute/path/to/ant-google-chat` with the checkout path:
 
 ```json
 {
